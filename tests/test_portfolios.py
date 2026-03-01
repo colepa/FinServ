@@ -158,3 +158,62 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Division-by-zero fix: empty / zero-value portfolio allocation
+# ---------------------------------------------------------------------------
+
+
+def test_allocation_empty_portfolio():
+    """asset_allocation_percentages returns {} for a portfolio with no holdings."""
+    from app.calculations import asset_allocation_percentages
+
+    assert asset_allocation_percentages({}) == {}
+
+
+def test_allocation_zero_value_holdings():
+    """Holdings with market_value=0 should all get 0% instead of ZeroDivisionError."""
+    from app.calculations import asset_allocation_percentages
+    from app.models import Holding
+
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=0, average_cost=150.0,
+            current_price=150.0, market_value=0.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "MSFT": Holding(
+            ticker="MSFT", quantity=0, average_cost=300.0,
+            current_price=300.0, market_value=0.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result == {"AAPL": 0.0, "MSFT": 0.0}
+
+
+def test_allocation_normal_holdings():
+    """Sanity check: normal holdings still get correct percentages."""
+    from app.calculations import asset_allocation_percentages
+    from app.models import Holding
+
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=10, average_cost=150.0,
+            current_price=150.0, market_value=1500.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "MSFT": Holding(
+            ticker="MSFT", quantity=5, average_cost=300.0,
+            current_price=300.0, market_value=1500.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result["AAPL"] == pytest.approx(50.0)
+    assert result["MSFT"] == pytest.approx(50.0)
+
+
+def test_get_empty_portfolio_does_not_crash():
+    """GET on an empty portfolio should return 200, not a 500 from ZeroDivisionError."""
+    pid = client.post("/portfolios", json={"name": "Empty", "owner": "hal"}).json()["id"]
+    resp = client.get(f"/portfolios/{pid}")
+    assert resp.status_code == 200
+    assert resp.json()["holdings"] == {}
