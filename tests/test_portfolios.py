@@ -158,3 +158,81 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Floating-point accumulation regression tests (#8)
+# ---------------------------------------------------------------------------
+
+
+def test_portfolio_value_no_floating_point_drift_many_trades():
+    """After many small fractional transactions the total market value must
+    not accumulate floating-point noise (issue #8)."""
+    pid = client.post(
+        "/portfolios", json={"name": "FP Test", "owner": "tester"}
+    ).json()["id"]
+
+    # Add 50 small fractional buys that are prone to fp drift
+    small_trades = [
+        ("AAPL", 0.33, 10.33),
+        ("MSFT", 0.17, 5.71),
+        ("GOOG", 0.29, 12.07),
+        ("TSLA", 0.41, 7.89),
+        ("AMZN", 0.11, 3.33),
+    ]
+
+    for i in range(50):
+        ticker, qty, price = small_trades[i % len(small_trades)]
+        resp = client.post(
+            f"/portfolios/{pid}/transactions",
+            json={
+                "ticker": ticker,
+                "transaction_type": "buy",
+                "quantity": qty,
+                "price_per_share": price,
+            },
+        )
+        assert resp.status_code == 201
+
+    summary = client.get(f"/portfolios/{pid}").json()
+    total = summary["total_market_value"]
+
+    # The value must be a clean 2-decimal-place number (no trailing noise)
+    assert total == round(total, 2), (
+        f"Floating-point drift detected: total_market_value={total!r}"
+    )
+
+
+def test_calculate_portfolio_value_rounds_at_end():
+    """Unit test: calculate_portfolio_value should sum raw values then round."""
+    from app.calculations import calculate_portfolio_value
+    from app.models import Holding
+
+    # Construct holdings whose individual market_values would each round
+    # differently if rounded before summing.
+    holdings = {
+        "A": Holding(
+            ticker="A", quantity=1.0, average_cost=0.0,
+            current_price=1.005, market_value=1.005,
+            gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "B": Holding(
+            ticker="B", quantity=1.0, average_cost=0.0,
+            current_price=1.005, market_value=1.005,
+            gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "C": Holding(
+            ticker="C", quantity=1.0, average_cost=0.0,
+            current_price=1.005, market_value=1.005,
+            gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+
+    result = calculate_portfolio_value(holdings)
+
+    # 3 * 1.005 = 3.015 → round(3.015, 2) == 3.01 or 3.02 depending on
+    # banker's rounding, but crucially NOT 3 * round(1.005, 2) which would
+    # give 3 * 1.0 = 3.0 or 3 * 1.01 = 3.03.
+    # The key assertion: the result equals round(sum_of_raw_values, 2).
+    expected = round(1.005 + 1.005 + 1.005, 2)
+    assert result == expected

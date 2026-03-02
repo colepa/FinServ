@@ -21,15 +21,11 @@ from app.models import Holding, Transaction
 def calculate_portfolio_value(holdings: Dict[str, Holding]) -> float:
     """Return the total market value of all holdings.
 
-    BUG 1: Each holding's market_value is rounded to 2 decimal places
-    *before* accumulation, which introduces cumulative rounding drift when
-    many small fractional positions are held.
+    Sums raw market values first and rounds only the final total to avoid
+    cumulative rounding drift across many small positions.
     """
-    total = 0.0
-    for holding in holdings.values():
-        # BUG: rounding here instead of at the final result causes drift
-        total += round(holding.market_value, 2)
-    return total
+    total = sum(holding.market_value for holding in holdings.values())
+    return round(total, 2)
 
 
 def compute_gain_loss(transactions: List[Transaction], current_price: float) -> float:
