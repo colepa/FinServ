@@ -11,6 +11,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import data
+from app.calculations import asset_allocation_percentages
+from app.models import Holding
 from app.main import app
 
 client = TestClient(app)
@@ -158,3 +160,47 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# asset_allocation_percentages – zero-value / empty portfolio (issue #11)
+# ---------------------------------------------------------------------------
+
+
+def test_allocation_empty_holdings():
+    """An empty holdings dict should return an empty result, not crash."""
+    result = asset_allocation_percentages({})
+    assert result == {}
+
+
+def test_allocation_all_zero_market_value():
+    """Holdings whose market_value is all zero should return 0% each."""
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=0, average_cost=150.0,
+            current_price=150.0, market_value=0.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "GOOG": Holding(
+            ticker="GOOG", quantity=0, average_cost=100.0,
+            current_price=100.0, market_value=0.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result == {"AAPL": 0.0, "GOOG": 0.0}
+
+
+def test_allocation_normal_case():
+    """Sanity check: non-zero holdings still produce correct percentages."""
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=10, average_cost=150.0,
+            current_price=150.0, market_value=1500.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "GOOG": Holding(
+            ticker="GOOG", quantity=5, average_cost=100.0,
+            current_price=100.0, market_value=500.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result["AAPL"] == pytest.approx(75.0)
+    assert result["GOOG"] == pytest.approx(25.0)
