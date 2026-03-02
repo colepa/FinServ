@@ -158,3 +158,77 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Floating-point drift regression
+# ---------------------------------------------------------------------------
+
+
+def test_no_floating_point_drift_after_many_transactions():
+    """Adding many small fractional transactions must not accumulate rounding noise.
+
+    Regression test for the bug where intermediate per-holding rounding caused
+    cumulative drift in the total portfolio market value.
+    """
+    pid = client.post("/portfolios", json={"name": "Drift Test", "owner": "tester"}).json()["id"]
+
+    # Add 50 small fractional buy transactions across several tickers
+    small_trades = [
+        ("AAPL", 0.33, 10.33),
+        ("MSFT", 0.17, 5.71),
+        ("GOOG", 0.29, 7.13),
+        ("TSLA", 0.41, 3.97),
+        ("AMZN", 0.11, 12.59),
+    ]
+
+    expected_market_value = 0.0
+    for i in range(50):
+        ticker, qty, price = small_trades[i % len(small_trades)]
+        client.post(
+            f"/portfolios/{pid}/transactions",
+            json={
+                "ticker": ticker,
+                "transaction_type": "buy",
+                "quantity": qty,
+                "price_per_share": price,
+            },
+        )
+        expected_market_value += qty * price
+
+    resp = client.get(f"/portfolios/{pid}")
+    assert resp.status_code == 200
+    total_market_value = resp.json()["total_market_value"]
+
+    # The total should match the expected value when both are rounded to 2 dp
+    assert total_market_value == round(expected_market_value, 2), (
+        f"Floating point drift detected: got {total_market_value}, "
+        f"expected {round(expected_market_value, 2)}"
+    )
+
+
+def test_calculate_portfolio_value_no_intermediate_rounding():
+    """Directly test that calculate_portfolio_value sums before rounding."""
+    from app.calculations import calculate_portfolio_value
+    from app.models import Holding
+
+    # Craft holdings whose individual market_values would cause drift if
+    # rounded before summing: 3 × round(3.335, 2) = 3 × 3.34 = 10.02
+    # but round(3 × 3.335, 2) = round(10.005, 2) = 10.0 (banker's rounding)
+    # or 10.01 depending on rounding. The key is they must differ.
+    holdings = {
+        f"T{i}": Holding(
+            ticker=f"T{i}",
+            quantity=1.0,
+            average_cost=0.0,
+            current_price=3.335,
+            market_value=3.335,
+            gain_loss=0.0,
+            allocation_pct=0.0,
+        )
+        for i in range(3)
+    }
+
+    result = calculate_portfolio_value(holdings)
+    # Should be round(3 * 3.335, 2) = round(10.005, 2) = 10.01
+    assert result == round(3 * 3.335, 2)
