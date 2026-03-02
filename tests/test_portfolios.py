@@ -1,9 +1,7 @@
 """Tests for the FinServ portfolio tracker API.
 
-These tests cover happy-path behaviour and basic validation.
-The buggy code paths in calculations.py (rounding drift, off-by-one
-cost basis, division-by-zero on empty portfolio) are intentionally
-not covered here so the automated triage system can discover them.
+These tests cover happy-path behaviour and basic validation,
+including edge cases around empty/zero-value portfolios.
 """
 from __future__ import annotations
 
@@ -11,7 +9,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import data
+from app.calculations import asset_allocation_percentages
 from app.main import app
+from app.models import Holding
 
 client = TestClient(app)
 
@@ -158,3 +158,64 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# asset_allocation_percentages – zero-value edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_allocation_empty_holdings():
+    """Empty dict of holdings should return an empty dict (no crash)."""
+    result = asset_allocation_percentages({})
+    assert result == {}
+
+
+def test_allocation_all_zero_value_holdings():
+    """Holdings with zero market_value should all get 0% (no ZeroDivisionError)."""
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=0, average_cost=0, current_price=0,
+            market_value=0, gain_loss=0, allocation_pct=0,
+        ),
+        "MSFT": Holding(
+            ticker="MSFT", quantity=0, average_cost=0, current_price=0,
+            market_value=0, gain_loss=0, allocation_pct=0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result == {"AAPL": 0.0, "MSFT": 0.0}
+
+
+def test_allocation_normal_holdings():
+    """Positive-value holdings should return correct percentages."""
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=10, average_cost=100, current_price=150,
+            market_value=1500, gain_loss=500, allocation_pct=0,
+        ),
+        "MSFT": Holding(
+            ticker="MSFT", quantity=5, average_cost=200, current_price=300,
+            market_value=1500, gain_loss=500, allocation_pct=0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result["AAPL"] == pytest.approx(50.0)
+    assert result["MSFT"] == pytest.approx(50.0)
+
+
+def test_allocation_via_api_empty_portfolio():
+    """Selling all shares should not crash the allocation calculation."""
+    pid = client.post("/portfolios", json={"name": "Empty", "owner": "zara"}).json()["id"]
+    # Buy then sell everything
+    client.post(
+        f"/portfolios/{pid}/transactions",
+        json={"ticker": "GOOG", "transaction_type": "buy", "quantity": 5, "price_per_share": 100.0},
+    )
+    resp = client.post(
+        f"/portfolios/{pid}/transactions",
+        json={"ticker": "GOOG", "transaction_type": "sell", "quantity": 5, "price_per_share": 100.0},
+    )
+    assert resp.status_code == 201
+    portfolio = client.get(f"/portfolios/{pid}").json()
+    assert portfolio["holdings"]["GOOG"]["allocation_pct"] == 0.0
