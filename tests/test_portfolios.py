@@ -158,3 +158,27 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+def test_portfolio_value_does_not_expose_float_artifacts():
+    pid = client.post("/portfolios", json={"name": "P6", "owner": "harry"}).json()["id"]
+
+    # 0.1 is not exactly representable in binary floating point. Summing many
+    # small positions can produce values like 9.99999999999998 unless the
+    # summary rounds at the end.
+    for i in range(100):
+        resp = client.post(
+            f"/portfolios/{pid}/transactions",
+            json={
+                "ticker": f"t{i}",
+                "transaction_type": "buy",
+                "quantity": 1,
+                "price_per_share": 0.1,
+            },
+        )
+        assert resp.status_code == 201
+
+    summary = client.get(f"/portfolios/{pid}").json()
+    assert summary["total_market_value"] == 10.0
+    assert summary["total_cost_basis"] == 10.0
+    assert summary["total_gain_loss"] == 0.0

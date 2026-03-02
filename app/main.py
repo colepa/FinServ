@@ -52,9 +52,16 @@ def get_portfolio(portfolio_id: str, prices: Dict[str, float] | None = None) -> 
     portfolio = _get_or_404(portfolio_id)
 
     holdings = portfolio.holdings
-    total_market_value = sum(h.market_value for h in holdings.values())
-    total_cost_basis = sum(h.average_cost * h.quantity for h in holdings.values())
-    total_gain_loss = total_market_value - total_cost_basis
+
+    # Round only at the portfolio-summary level to prevent floating point
+    # artifacts (e.g. 9.9999999998) from leaking into API responses.
+    total_market_value_raw = sum(h.market_value for h in holdings.values())
+    total_market_value = round(total_market_value_raw, 2)
+
+    total_cost_basis_raw = sum(h.average_cost * h.quantity for h in holdings.values())
+    total_cost_basis = round(total_cost_basis_raw, 2)
+
+    total_gain_loss = round(total_market_value_raw - total_cost_basis_raw, 2)
 
     return PortfolioSummary(
         id=portfolio.id,
