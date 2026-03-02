@@ -61,12 +61,14 @@ def compute_gain_loss(transactions: List[Transaction], current_price: float) -> 
 def asset_allocation_percentages(holdings: Dict[str, Holding]) -> Dict[str, float]:
     """Return each holding's share of total portfolio value as a percentage.
 
-    BUG 3: If the portfolio has no holdings (or all holdings have zero value),
-    total_value will be 0.0 and the division below raises ZeroDivisionError.
+    Returns 0.0 % for every ticker when the portfolio is empty or all
+    holdings have a zero market value.
     """
     total_value = sum(h.market_value for h in holdings.values())
 
-    # BUG: no guard for total_value == 0
+    if total_value == 0:
+        return {ticker: 0.0 for ticker in holdings}
+
     return {
         ticker: (holding.market_value / total_value) * 100
         for ticker, holding in holdings.items()

@@ -11,7 +11,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import data
+from app.calculations import asset_allocation_percentages
 from app.main import app
+from app.models import Holding
 
 client = TestClient(app)
 
@@ -158,3 +160,55 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# asset_allocation_percentages – zero-value / empty portfolio (Bug #2)
+# ---------------------------------------------------------------------------
+
+
+def test_allocation_empty_holdings():
+    """Empty holdings dict should return an empty dict, not raise."""
+    result = asset_allocation_percentages({})
+    assert result == {}
+
+
+def test_allocation_all_zero_market_value():
+    """Holdings whose market_value are all 0 should each get 0%."""
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=0, average_cost=150.0,
+            current_price=150.0, market_value=0.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "GOOG": Holding(
+            ticker="GOOG", quantity=0, average_cost=100.0,
+            current_price=100.0, market_value=0.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result == {"AAPL": 0.0, "GOOG": 0.0}
+
+
+def test_allocation_normal_holdings():
+    """Sanity check: holdings with positive values return correct percentages."""
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=10, average_cost=150.0,
+            current_price=150.0, market_value=1500.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+        "GOOG": Holding(
+            ticker="GOOG", quantity=5, average_cost=100.0,
+            current_price=100.0, market_value=500.0, gain_loss=0.0, allocation_pct=0.0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result["AAPL"] == pytest.approx(75.0)
+    assert result["GOOG"] == pytest.approx(25.0)
+
+
+def test_allocation_via_api_empty_portfolio():
+    """GET on an empty portfolio should succeed (no crash)."""
+    pid = client.post("/portfolios", json={"name": "Empty", "owner": "zara"}).json()["id"]
+    resp = client.get(f"/portfolios/{pid}")
+    assert resp.status_code == 200
+    assert resp.json()["holdings"] == {}
