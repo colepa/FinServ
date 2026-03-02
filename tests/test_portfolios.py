@@ -158,3 +158,98 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Floating-point rounding drift regression tests
+# ---------------------------------------------------------------------------
+
+
+def test_no_rounding_drift_after_many_small_transactions():
+    """Adding many small fractional transactions must not accumulate
+    floating-point noise in the total market value."""
+    pid = client.post(
+        "/portfolios", json={"name": "Drift Test", "owner": "tester"}
+    ).json()["id"]
+
+    # 30 small buys with awkward fractional values
+    trades = [
+        ("AAPL", 0.33, 10.33),
+        ("AAPL", 0.17, 5.71),
+        ("GOOG", 0.29, 12.07),
+        ("GOOG", 0.41, 7.89),
+        ("MSFT", 0.13, 15.43),
+        ("MSFT", 0.37, 9.11),
+        ("AAPL", 0.11, 11.17),
+        ("GOOG", 0.23, 8.53),
+        ("MSFT", 0.19, 14.29),
+        ("AAPL", 0.07, 6.67),
+        ("GOOG", 0.31, 10.99),
+        ("MSFT", 0.43, 7.31),
+        ("AAPL", 0.09, 13.37),
+        ("GOOG", 0.27, 9.41),
+        ("MSFT", 0.21, 11.83),
+        ("AAPL", 0.39, 8.17),
+        ("GOOG", 0.47, 6.43),
+        ("MSFT", 0.53, 12.61),
+        ("AAPL", 0.61, 7.79),
+        ("GOOG", 0.03, 14.53),
+        ("MSFT", 0.67, 5.39),
+        ("AAPL", 0.71, 10.91),
+        ("GOOG", 0.59, 8.27),
+        ("MSFT", 0.83, 6.73),
+        ("AAPL", 0.97, 9.59),
+        ("GOOG", 0.89, 11.41),
+        ("MSFT", 0.79, 7.97),
+        ("AAPL", 0.02, 13.03),
+        ("GOOG", 0.14, 10.67),
+        ("MSFT", 0.06, 8.89),
+    ]
+
+    for ticker, qty, price in trades:
+        resp = client.post(
+            f"/portfolios/{pid}/transactions",
+            json={
+                "ticker": ticker,
+                "transaction_type": "buy",
+                "quantity": qty,
+                "price_per_share": price,
+            },
+        )
+        assert resp.status_code == 201
+
+    summary = client.get(f"/portfolios/{pid}").json()
+    total_mv = summary["total_market_value"]
+
+    # The total must have at most 2 decimal places (no floating-point noise)
+    assert total_mv == round(total_mv, 2), (
+        f"total_market_value has floating-point noise: {total_mv!r}"
+    )
+
+
+def test_calculate_portfolio_value_no_intermediate_rounding():
+    """Unit-level check: calculate_portfolio_value should sum raw values
+    and round only at the end."""
+    from app.calculations import calculate_portfolio_value
+    from app.models import Holding
+
+    # Construct holdings whose individual market_values would each round
+    # differently if rounded before summation.
+    holdings = {
+        f"T{i}": Holding(
+            ticker=f"T{i}",
+            quantity=0.33,
+            average_cost=10.0,
+            current_price=10.33,
+            market_value=0.33 * 10.33,  # 3.4089 — rounds to 3.41
+            gain_loss=0.0,
+            allocation_pct=0.0,
+        )
+        for i in range(50)
+    }
+
+    result = calculate_portfolio_value(holdings)
+
+    # Expected: round(50 * 0.33 * 10.33, 2)
+    expected = round(50 * 0.33 * 10.33, 2)
+    assert result == expected, f"Expected {expected}, got {result}"

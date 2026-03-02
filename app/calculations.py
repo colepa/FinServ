@@ -1,16 +1,4 @@
-"""
-Portfolio calculation helpers.
-
-NOTE: This module contains intentional bugs for demo purposes:
-  Bug 1 (rounding): calculate_portfolio_value rounds intermediate per-holding
-                    values before summing, causing cumulative rounding drift.
-  Bug 2 (off-by-one): compute_gain_loss uses the first transaction price as
-                      cost basis but slices transactions[1:] instead of [0:],
-                      so the first buy is excluded from the cost calculation.
-  Bug 3 (division-by-zero): asset_allocation_percentages divides by
-                             total_value without guarding against an empty
-                             (zero-value) portfolio.
-"""
+"""Portfolio calculation helpers."""
 from __future__ import annotations
 
 from typing import Dict, List
@@ -21,15 +9,11 @@ from app.models import Holding, Transaction
 def calculate_portfolio_value(holdings: Dict[str, Holding]) -> float:
     """Return the total market value of all holdings.
 
-    BUG 1: Each holding's market_value is rounded to 2 decimal places
-    *before* accumulation, which introduces cumulative rounding drift when
-    many small fractional positions are held.
+    Sums raw market values first and rounds only the final result to avoid
+    cumulative rounding drift when many small fractional positions are held.
     """
-    total = 0.0
-    for holding in holdings.values():
-        # BUG: rounding here instead of at the final result causes drift
-        total += round(holding.market_value, 2)
-    return total
+    total = sum(h.market_value for h in holdings.values())
+    return round(total, 2)
 
 
 def compute_gain_loss(transactions: List[Transaction], current_price: float) -> float:
