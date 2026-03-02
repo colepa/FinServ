@@ -7,9 +7,9 @@ NOTE: This module contains intentional bugs for demo purposes:
   Bug 2 (off-by-one): compute_gain_loss uses the first transaction price as
                       cost basis but slices transactions[1:] instead of [0:],
                       so the first buy is excluded from the cost calculation.
-  Bug 3 (division-by-zero): asset_allocation_percentages divides by
-                             total_value without guarding against an empty
-                             (zero-value) portfolio.
+  Bug 3 (division-by-zero): FIXED – asset_allocation_percentages now
+                             returns 0.0 % for every holding when the
+                             total portfolio value is zero.
 """
 from __future__ import annotations
 
@@ -61,12 +61,14 @@ def compute_gain_loss(transactions: List[Transaction], current_price: float) -> 
 def asset_allocation_percentages(holdings: Dict[str, Holding]) -> Dict[str, float]:
     """Return each holding's share of total portfolio value as a percentage.
 
-    BUG 3: If the portfolio has no holdings (or all holdings have zero value),
-    total_value will be 0.0 and the division below raises ZeroDivisionError.
+    Returns 0.0 % for every holding when the portfolio is empty or the total
+    market value is zero, instead of raising ``ZeroDivisionError``.
     """
     total_value = sum(h.market_value for h in holdings.values())
 
-    # BUG: no guard for total_value == 0
+    if total_value == 0:
+        return {ticker: 0.0 for ticker in holdings}
+
     return {
         ticker: (holding.market_value / total_value) * 100
         for ticker, holding in holdings.items()

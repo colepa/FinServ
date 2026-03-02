@@ -158,3 +158,62 @@ def test_sell_unknown_ticker_rejected():
         json={"ticker": "UNKNOWN", "transaction_type": "sell", "quantity": 1, "price_per_share": 50.0},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Division-by-zero fix: asset_allocation_percentages (#2)
+# ---------------------------------------------------------------------------
+
+
+def test_allocation_empty_portfolio_no_crash():
+    """Getting a portfolio with no holdings must not raise ZeroDivisionError."""
+    pid = client.post("/portfolios", json={"name": "Empty", "owner": "zara"}).json()["id"]
+    resp = client.get(f"/portfolios/{pid}")
+    assert resp.status_code == 200
+    assert resp.json()["holdings"] == {}
+
+
+def test_allocation_zero_value_holdings():
+    """Holdings that exist but have zero market value should all report 0 %."""
+    from app.calculations import asset_allocation_percentages
+    from app.models import Holding
+
+    holdings = {
+        "AAPL": Holding(
+            ticker="AAPL", quantity=0, average_cost=0,
+            current_price=0, market_value=0, gain_loss=0, allocation_pct=0,
+        ),
+        "GOOG": Holding(
+            ticker="GOOG", quantity=0, average_cost=0,
+            current_price=0, market_value=0, gain_loss=0, allocation_pct=0,
+        ),
+    }
+    result = asset_allocation_percentages(holdings)
+    assert result == {"AAPL": 0.0, "GOOG": 0.0}
+
+
+def test_allocation_empty_holdings_dict():
+    """An empty holdings dict should return an empty result."""
+    from app.calculations import asset_allocation_percentages
+
+    result = asset_allocation_percentages({})
+    assert result == {}
+
+
+def test_allocation_after_sell_all_shares():
+    """Selling all shares should result in 0 % allocation, not a crash."""
+    pid = client.post("/portfolios", json={"name": "SellAll", "owner": "kim"}).json()["id"]
+    # Buy then sell the same quantity
+    client.post(
+        f"/portfolios/{pid}/transactions",
+        json={"ticker": "NFLX", "transaction_type": "buy", "quantity": 5, "price_per_share": 400.0},
+    )
+    resp = client.post(
+        f"/portfolios/{pid}/transactions",
+        json={"ticker": "NFLX", "transaction_type": "sell", "quantity": 5, "price_per_share": 400.0},
+    )
+    assert resp.status_code == 201
+
+    portfolio = client.get(f"/portfolios/{pid}").json()
+    nflx = portfolio["holdings"]["NFLX"]
+    assert nflx["allocation_pct"] == 0.0
