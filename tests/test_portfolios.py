@@ -209,3 +209,11 @@ def test_allocation_normal_portfolio():
     result = asset_allocation_percentages(holdings)
     assert result["AAPL"] == pytest.approx(75.0)
     assert result["GOOG"] == pytest.approx(25.0)
+
+
+def test_get_empty_portfolio_does_not_crash():
+    """GET on an empty portfolio should return 200, not a 500 from ZeroDivisionError."""
+    pid = client.post("/portfolios", json={"name": "Empty", "owner": "hal"}).json()["id"]
+    resp = client.get(f"/portfolios/{pid}")
+    assert resp.status_code == 200
+    assert resp.json()["holdings"] == {}
