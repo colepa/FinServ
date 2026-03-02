@@ -122,13 +122,9 @@ def add_transaction(portfolio_id: str, payload: TransactionCreate) -> Transactio
     holding.gain_loss = holding.market_value - (holding.average_cost * holding.quantity)
 
     # Refresh allocation percentages across all holdings
-    try:
-        alloc = asset_allocation_percentages(portfolio.holdings)
-        for t, pct in alloc.items():
-            portfolio.holdings[t].allocation_pct = pct
-    except ZeroDivisionError:
-        for t in portfolio.holdings:
-            portfolio.holdings[t].allocation_pct = 0.0
+    alloc = asset_allocation_percentages(portfolio.holdings)
+    for t, pct in alloc.items():
+        portfolio.holdings[t].allocation_pct = pct
 
     return transaction
 
