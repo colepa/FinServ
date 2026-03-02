@@ -7,7 +7,7 @@ from typing import Dict
 from fastapi import FastAPI, HTTPException
 
 from app import data
-from app.calculations import asset_allocation_percentages, average_cost_basis
+from app.calculations import asset_allocation_percentages, average_cost_basis, calculate_portfolio_value
 from app.models import (
     Holding,
     Portfolio,
@@ -52,9 +52,9 @@ def get_portfolio(portfolio_id: str, prices: Dict[str, float] | None = None) -> 
     portfolio = _get_or_404(portfolio_id)
 
     holdings = portfolio.holdings
-    total_market_value = sum(h.market_value for h in holdings.values())
-    total_cost_basis = sum(h.average_cost * h.quantity for h in holdings.values())
-    total_gain_loss = total_market_value - total_cost_basis
+    total_market_value = calculate_portfolio_value(holdings)
+    total_cost_basis = round(sum(h.average_cost * h.quantity for h in holdings.values()), 2)
+    total_gain_loss = round(total_market_value - total_cost_basis, 2)
 
     return PortfolioSummary(
         id=portfolio.id,
